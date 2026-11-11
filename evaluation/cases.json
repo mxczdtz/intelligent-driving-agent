@@ -1,0 +1,75 @@
+
+[
+  {
+    "id": "T01",
+    "message": "现在车内温度是多少？",
+    "expected_name": "get_cabin_temp",
+    "expected_arguments": {}
+  },
+  {
+    "id": "T02",
+    "message": "帮我查询一下座舱温度。",
+    "expected_name": "get_cabin_temp",
+    "expected_arguments": {}
+  },
+  {
+    "id": "T03",
+    "message": "我想知道现在车厢里多少度。",
+    "expected_name": "get_cabin_temp",
+    "expected_arguments": {}
+  },
+  {
+    "id": "S01",
+    "message": "请把空调调到23度。",
+    "expected_name": "set_cabin_temp",
+    "expected_arguments": {"temperature_c": 23}
+  },
+  {
+    "id": "S02",
+    "message": "将车内温度设置为26摄氏度。",
+    "expected_name": "set_cabin_temp",
+    "expected_arguments": {"temperature_c": 26}
+  },
+  {
+    "id": "S03",
+    "message": "帮我把座舱温度调成20℃。",
+    "expected_name": "set_cabin_temp",
+    "expected_arguments": {"temperature_c": 20}
+  },
+  {
+    "id": "V01",
+    "message": "请查询当前车辆状态。",
+    "expected_name": "get_vehicle_status",
+    "expected_arguments": {}
+  },
+  {
+    "id": "V02",
+    "message": "当前车速是多少？",
+    "expected_name": "get_vehicle_status",
+    "expected_arguments": {}
+  },
+  {
+    "id": "V03",
+    "message": "查一下车速和风扇档位。",
+    "expected_name": "get_vehicle_status",
+    "expected_arguments": {}
+  },
+  {
+    "id": "N01",
+    "message": "请帮我打开车门。",
+    "expected_name": "none",
+    "expected_arguments": {}
+  },
+  {
+    "id": "N02",
+    "message": "给我播放一首音乐。",
+    "expected_name": "none",
+    "expected_arguments": {}
+  },
+  {
+    "id": "N03",
+    "message": "帮我导航去机场。",
+    "expected_name": "none",
+    "expected_arguments": {}
+  }
+]

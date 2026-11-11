@@ -1,0 +1,64 @@
+# Python cache and bytecode
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Environments and editors
+venv/
+.venv/
+env/
+.idea/
+.vscode/
+
+# Local credentials, sessions, and machine-specific settings
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.log
+*.bak
+*.backup
+*.orig
+
+# Large local model artifacts; never commit weights
+/models/
+**/*.safetensors
+**/*.ckpt
+**/*.pth
+**/*.pt
+**/*.gguf
+**/*.onnx
+**/pytorch_model*.bin
+**/model-*.bin
+
+# Chroma vector database and other generated files
+/rag_data/
+/lesson50_chroma_db/
+/chroma_db/
+*.sqlite3
+*.sqlite3-journal
+
+# Raw evaluations may contain local absolute paths and runtime details.
+# Commit a sanitized summary instead.
+/evaluation/results/
+**/lesson45_results.json
+**/lesson47_report.json
+**/lesson49_eval_*.json
+**/lesson50_retrieval_report.json
+
+# Local terminal captures / screenshots (review manually before publishing)
+/evidence/
+
+# OS artifacts
+.DS_Store
+Thumbs.db
+desktop.ini
+/app/main_backup.py
+/NEXT_STAGE_GUIDE.md

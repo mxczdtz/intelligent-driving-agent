@@ -1,0 +1,62 @@
+[
+  {
+    "id": "R01",
+    "question": "水温表进入红区还冒白色蒸汽，司机该怎么办？",
+    "expected_id": "KB001"
+  },
+  {
+    "id": "R02",
+    "question": "停车后地上出现疑似冷却液的彩色液体，液位一直下降",
+    "expected_id": "KB002"
+  },
+  {
+    "id": "R03",
+    "question": "行驶时红色机油压力灯突然亮起，有什么处理建议？",
+    "expected_id": "KB003"
+  },
+  {
+    "id": "R04",
+    "question": "踩刹车感觉踏板很软，停车距离比以前长",
+    "expected_id": "KB004"
+  },
+  {
+    "id": "R05",
+    "question": "仪表显示胎压异常，发现轮胎鼓包，应该怎么办？",
+    "expected_id": "KB005"
+  },
+  {
+    "id": "R06",
+    "question": "打火时只听到咔哒声，仪表灯也变暗了",
+    "expected_id": "KB006"
+  },
+  {
+    "id": "R07",
+    "question": "空调制冷打开了可是一直吹不出凉风",
+    "expected_id": "KB007"
+  },
+  {
+    "id": "R08",
+    "question": "车载鼓风机调到大档位出风口风量还是很小",
+    "expected_id": "KB008"
+  },
+  {
+    "id": "R09",
+    "question": "开到某个速度区间方向盘持续抖动",
+    "expected_id": "KB009"
+  },
+  {
+    "id": "R10",
+    "question": "纯电动车出现高压绝缘故障提示，能否自己检查橙色电缆？",
+    "expected_id": "KB010"
+  },
+  {
+    "id": "R11",
+    "question": "自适应巡航提示传感器被遮挡而且功能不可用",
+    "expected_id": "KB011"
+  },
+  {
+    "id": "R12",
+    "question": "下雨时雨刷留下大片水痕，前挡起雾看不清",
+    "expected_id": "KB012"
+  }
+]
