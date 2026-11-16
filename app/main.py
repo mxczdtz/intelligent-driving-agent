@@ -741,3 +741,7 @@ def unified_chat(
         ),
         **vehicle_result
     }
+
+# === SCENE_RISK_ROUTER_PHASE1 ===
+from app.scene_api import router as scene_risk_router
+app.include_router(scene_risk_router)

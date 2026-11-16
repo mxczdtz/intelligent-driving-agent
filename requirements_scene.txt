@@ -1,0 +1,5 @@
+# 在原项目 requirements.txt 和 CUDA PyTorch 已可用的环境中追加安装
+# YOLO、图像验证和 FastAPI 表单支持；不包括 CARLA/VLM（后续阶段）
+ultralytics>=8.3,<9
+pillow>=10,<13
+python-multipart>=0.0.9,<1
