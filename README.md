@@ -1,179 +1,278 @@
-# Vehicle Agent + RAG Demo 🚗
+# 智能驾驶场景理解与风险分析系统 🚗
 
-> 基于本地 **Qwen2.5-0.5B-Instruct**、FastAPI、ChromaDB、BM25 和 RRF 的汽车智能座舱教学原型。车辆数据全部为**模拟状态**，**不连接真实车辆**。
+**CARLA · YOLO · VLM · Qwen · RAG · FastAPI**
 
-## 项目能力
+基于 CARLA 仿真、目标检测、视觉语言证据和本地大语言模型的**智能驾驶多模态研究原型**。项目在原有 **Vehicle Agent + RAG Demo**（模拟座舱工具 Agent、汽车知识检索）基础上，新增 CARLA/YOLO 实时感知展示、离线 VLM/Qwen 风险分析、证据约束的 JSON 输出，以及三类仿真事件的探索性评测。
 
-- **车辆工具 Agent**：查询模拟车辆状态、车内温度、申请修改模拟空调温度。
-- **本地大模型**：Qwen 将自然语言规划为工具名称和参数；Python 对工具白名单及参数做独立校验。
-- **写操作确认**：写操作先保存待确认计划，再经客户端确认执行；令牌过期、一次性消费、会话 Cookie 隔离（教学级）。
-- **汽车知识库 RAG**：中文 BGE Embedding + ChromaDB 语义检索 + BM25 关键词检索 + RRF 融合。
-- **高风险故障回答**：高风险匹配采用知识库原文摘录，避免小模型改写安全要点。
-- **统一入口**：`POST /assistant/chat` 用保守规则分流车辆操作与汽车知识问答。
-- **自动化评测**：pytest API 测试、Qwen 工具规划开发集、RAG 检索 Recall@K / MRR@K。
+> **安全与范围声明**
+>
+> 本项目仅用于 **CARLA 仿真研究、可视化展示和人工复核**，不接入真实车辆，不向 CARLA 或真实车辆下发由模型生成的油门、制动、转向指令。风险等级不是可用于真实驾驶的安全保证。当前系统**不是实时 YOLO + VLM + Qwen 逐帧闭环系统**。
 
-## 架构
+## 1. 项目状态（2026-11-18）
+
+| 模块 | 已实现/已验证的范围 |
+| --- | --- |
+| CARLA 场景与 RGB 采集 | CARLA 0.9.16、`Town10HD_Opt`；前车减速、行人横穿、交通灯变化三组采集，合计 **103 个唯一帧** |
+| 实时 YOLO 展示 | CARLA RGB → FastAPI → YOLO 检测与**二维启发式**风险提示 → Dashboard；曾实际展示成功 |
+| 离线视觉证据融合 | 将已保存的 YOLO 检测和 VLM 文本声明对齐，生成结构化证据；与 CARLA 事后真值隔离 |
+| 离线 Qwen 风险研究 | 本地 Qwen2.5-0.5B-Instruct 输出结构化 JSON，含证据引用、校验、最多一次重试及安全降级 |
+| Dashboard V2 | 上部实时 YOLO 面板、下部**历史离线 Qwen 报告**；两部分已在浏览器展示 |
+| 离线时序 Agent / RAG | 已实现针对保存轨迹/关键帧的 RAG + VLM + Qwen 研究回放路径；Dashboard 回放入口可见，最新一轮未单独点击验收完整回放 |
+| 三场景评测 | CARLA 事件状态与 YOLO 报告按 `world_frame` 对齐；开展阈值明确的 **Proxy（启发式代理）** 对照 |
+| 自动化测试 | 历史一次全项目运行结果为 `204 passed in 4.82s`；此后有新增修改，**不代表最新代码已再次完整回归** |
+| GitHub 发布 | 源码整理与发布审查阶段；此处不宣称已完成远端推送 |
+
+其中，**“源码存在”与“当次完整功能实测成功”是不同概念**。本 README 对已有证据和限制分别说明。
+
+## 2. 系统架构与事实边界
 
 ```text
-用户自然语言 -> /assistant/chat
-                   |
-                   +-> 规则分流 -> 车辆操作 -> Qwen 工具规划
-                   |                        -> Python 参数/白名单校验
-                   |                        -> 只读直接执行 / 写操作待确认
-                   |                        -> /agent/confirm 单次执行模拟操作
-                   |
-                   +-> 汽车故障知识 -> BGE Embedding + ChromaDB
-                                     + BM25 中文 N-gram
-                                     -> RRF 融合 Top-K
-                                     -> 高风险文档摘录 / Qwen 文档问答
-                                     -> 回答 + 知识编号
+                   ┌──────── CARLA / 研究场景 ────────┐
+                   │ RGB 帧、仿真状态（分开保存）      │
+                   └──────────────┬───────────────────┘
+                                  │ RGB
+    [实时展示链路]                 ▼
+      CARLA RGB 客户端 → POST /scene/live/frame
+                       → YOLO 目标检测
+                       → 2D 规则风险提示
+                       → /scene/live/dashboard（LIVE）
+
+    [离线单帧研究链路]
+      已保存的 YOLO / VLM 对齐报告
+                       → scene_fusion.py（证据融合）
+                       → scene_llm_risk.py（本地 Qwen）
+                       → JSON 结构校验 / 重试 / 安全降级
+                       → 历史报告 → Dashboard（OFFLINE）
+
+    [独立离线时序研究链路]
+      已保存的车辆框 / 帧间连续性
+                       → VLM 关键帧 + VehicleRAG
+                       → Qwen 证据选择
+                       → HTML / JSON 研究回放
+
+    [事后评测链路]
+      CARLA metadata.json（事件真值）
+                       + YOLO 已保存预测（world_frame 对齐）
+                       → 人工设定阈值的风险 Proxy 对照
 ```
 
-## 项目结构（核心文件）
+**三个重要区别：**
+
+1. **LIVE** 面板的风险是目标检测与二维规则产生的提示，不是实时 Qwen 决策。
+2. **OFFLINE** 面板展示的是保存的历史帧 Qwen 研究结果，**不对应当前摄像头画面**。
+3. CARLA 物理状态仅用于**事后评测**，不作为 YOLO/VLM/Qwen 的“视觉识别事实”偷偷输入模型。
+
+当证据不足时，`UNKNOWN` 表示**无法可靠判断**，不代表安全，也不等于程序运行失败。
+
+## 3. 核心功能
+
+### 3.1 CARLA / YOLO 实时感知
+
+- CARLA RGB 客户端上传 JPEG/PNG 图像到 FastAPI。
+- YOLO 返回类别、置信度和 2D 边界框；2D 启发式规则生成研究性风险提示。
+- Dashboard 显示摄像头、检测框、帧号、检测数量、处理延迟及会话状态。
+- 页面在**未连接 RGB 客户端**时显示等待状态，属于正常情况。
+- 实时会话保存在进程内存中，服务重启后不会自动保留。
+
+主要入口：
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| `GET` | `/scene/live/dashboard` | 实时感知 + 历史离线研究 Dashboard |
+| `POST` | `/scene/live/frame` | 供 CARLA RGB 客户端上传图像 |
+| `GET` | `/scene/live/status` | 实时会话状态 |
+| `GET` | `/scene/live/snapshot` | 实时画面快照 |
+| `GET` | `/scene/live/research/reports` | 读取本机已保存的 Qwen 历史报告摘要 |
+| `GET` | `/scene/live/research/replay` | 历史时序研究回放入口 |
+
+### 3.2 YOLO / VLM 证据融合与 Qwen 风险分析
+
+- `app/scene_fusion.py`：汇总 YOLO 检测与**未独立核实的** VLM 文本声明，生成 `scene_fusion_evidence.v1`。
+- `app/scene_llm_risk.py`：从融合证据提取白名单字段，交给本地 Qwen 生成 `scene_llm_risk.v1` 风险候选。
+- 风险候选字段：`risk_level`、`key_factors`、`evidence_refs`、`driving_suggestion`、`uncertainty`。
+- 校验约束：风险等级与证据 ID 必须合法；最多重试一次；失败或证据不足时保守处理；实际驾驶建议会被替换成**人工复核用途**的安全提示。
+- VLM 关于颜色、运动、人行道或灯色的自然语言描述只是**模型声明**，不能自动视为仿真真值。
+
+### 3.3 独立离线时序研究 Agent
+
+`scripts/driving_agent_mvp.py` 使用保存的 YOLO 车辆框和临时帧间连续性信息，结合 VLM 关键帧、原有 VehicleRAG 知识与 Qwen 证据选择，生成 HTML/JSON 回放。
+
+**限制：**这是离线研究 MVP；临时目标关联**不等同于已完成标准 ByteTrack**；历史回放入口存在不表示在本轮已逐项完成页面验收。
+
+### 3.4 保留的 Vehicle Agent + RAG 功能
+
+本仓库最早是一个智能座舱教学原型，原有功能保留：
+
+- **车辆工具 Agent**：查询模拟车辆状态、温度及提出模拟空调调整请求。
+- **文本 Qwen**：将自然语言转为工具与参数，配合 Python 侧的白名单/参数校验。
+- **写操作确认流程**：对部分模拟状态修改要求确认；**不应将其理解为生产级授权系统**。
+- **VehicleRAG**：中文 BGE Embedding、ChromaDB、BM25、RRF 等检索或可用环境下的回退。
+- **接口**：原有 `/assistant/chat`、`/agent/chat`、`/rag/ask` 等功能继续由同一个 FastAPI 应用提供。
+
+> 某些历史模拟车辆状态接口可能允许绕过预期确认流程，因此**不要将整个 FastAPI 服务直接暴露公网**；此仓库默认仅按本地研究环境使用。
+
+## 4. 主要目录
 
 ```text
 app/
-  main.py               # FastAPI 接口
-  agent_planner.py      # Qwen 工具规划与模型结果检查
-  qwen_engine.py        # 本地 Qwen 加载与推理
-  pending_actions.py    # 待确认动作、一次性令牌、会话存储
-  intent_router.py      # 统一入口的规则分流
-  rag_engine.py         # Chroma + BM25 + RRF + 回答
+  main.py                      # 现有 FastAPI 主入口
+  live_carla_api.py            # 实时 CARLA/YOLO + Dashboard + 历史报告入口
+  multimodal_api.py            # 离线多模态研究接口
+  scene_fusion.py              # YOLO/VLM 视觉证据融合
+  scene_llm_risk.py            # 单帧 Qwen 风险候选 / JSON 校验 / 安全降级
+  scene_grounded_packet.py     # 视觉证据相关研究模块
+  scene_grounded_risk.py       # 风险研究相关模块
+  rag_engine.py                # 原有 RAG 基础
+scripts/
+  carla_live_rgb_client.py     # RGB 客户端
+  carla_lead_brake_demo.py     # 前车减速实验
+  carla_pedestrian_demo.py     # 行人横穿实验
+  carla_traffic_light_demo.py  # 交通灯变化实验
+  driving_agent_mvp.py         # 独立离线时序研究
+  scene_pipeline_bridge.py     # 证据融合 → Qwen 输入契约检查
+  audit_yolo_baselines.py      # YOLO 基线数据审计
+  build_carla_event_reference_v2.py  # CARLA 事件对齐（正式版）
+  evaluate_carla_risk_proxies.py      # 探索性 Proxy 对照
+schemas/
+  scene_llm_risk_v1.schema.json
 knowledge/
-  vehicle_knowledge.json
-evaluation/
-  cases.json
-  run_eval.py
-  rag_cases.json
-  run_rag_eval.py
+  mvp_risk_knowledge.md
 tests/
-  test_vehicle_api.py
-  test_rag_api.py
-  test_rag_safety.py
-  test_unified_api.py
-requirements.txt
-.gitignore
+  ...                          # 单元/接口/研究模块测试
 ```
 
-## 环境与模型准备
+说明：`scripts/build_carla_event_reference.py` 旧版曾存在**浮点制动命令解析问题**；正式流程以 `build_carla_event_reference_v2.py` 为准。
 
-- 推荐 **Windows / Python 3.11**；其他系统可自行适配。
-- GPU 推理在当前版本要求 NVIDIA GPU + 可用的 CUDA PyTorch。
-- Qwen 和 BGE 模型权重**不在本仓库分发**，需要自行合法下载到本地。
-- 首次使用时，先通过 [PyTorch 官方安装页面](https://pytorch.org/get-started/locally/) 安装适合本机 CUDA 的 PyTorch，再安装其余依赖：
+本地 `models/`、`evidence/`、`rag_data/`、模型缓存及个人配置不作为公开仓库的默认发布内容。
 
-```powershell
-python -m pip install -r requirements.txt
-```
+## 5. 本地运行与展示
 
-**模型配置：** 在启动项目的同一个 PowerShell 里设置本地路径（修改成自己的路径）。
+### 5.1 运行前提
 
-```powershell
-# Qwen 模型所在文件夹内应存在 config.json、tokenizer.json、model.safetensors 等
-$env:QWEN_MODEL_DIR = "D:\models\Qwen2.5-0.5B-Instruct"
+- Windows + Python 开发环境；历史运行中 **FastAPI/YOLO/Qwen 使用 Python 3.11**，**CARLA RGB 客户端使用与 CARLA API 兼容的 Python 3.12**。
+- CARLA 0.9.16（用于可选实时采集）；已验证地图为 `Town10HD_Opt`。
+- 本地 YOLO 权重、Qwen2.5-0.5B-Instruct、BGE 模型以及相应依赖需自行按现有环境准备。
+- 历史开发设备约 **6 GB 显存**，大模型研究推荐串行执行，而非同时逐帧推理。
 
-# BGE 模型路径；通过 ModelScope 下载后指定本地文件夹
-$env:RAG_EMBED_MODEL = (Resolve-Path ".\models\bge-small-zh-v1.5").Path
+**仓库不提供大模型权重及原始 CARLA 实验图像。** 克隆代码不等于具备运行全部历史研究的原始数据。具体安装依赖请以仓库实际依赖配置和运行环境为准。
 
-# Embedding 默认用 CPU，减少与 Qwen 争抢 GPU 显存
-$env:RAG_EMBED_DEVICE = "cpu"
-```
+### 5.2 启动本地 API / Dashboard
 
-可从 [Hugging Face Qwen2.5-0.5B-Instruct](https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct) 与 [BGE-small-zh-v1.5](https://huggingface.co/BAAI/bge-small-zh-v1.5) 获得模型信息，并遵守各模型许可条款。请勿把权重提交到 Git。
-
-> `.env.example` 仅供参考。该项目目前读取系统环境变量，**不会自动解析 `.env` 文件**。
-
-## 初始化知识库索引
-
-```powershell
-python -m app.rag_engine --bm25-only "发动机温度过高怎么办？"
-python -m app.rag_engine --build
-python -m app.rag_engine --query "发动机温度过高怎么办？"
-python -m app.rag_engine --ask "发动机温度过高怎么办？"
-```
-
-首次 `--build` 会加载本地 Embedding 模型并将 Chroma 索引保存到 `rag_data/`，这个目录不应提交到 Git。
-
-## 启动 API
+在项目根目录、已有依赖的 Python 环境中执行：
 
 ```powershell
 python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
-打开 <http://127.0.0.1:8000/docs> 查看 Swagger API 文档。
+浏览器访问：
 
-### 统一入口请求示例
-
-`POST /assistant/chat`：
-
-```json
-{
-  "message": "发动机温度过高怎么办？",
-  "mode": "auto",
-  "top_k": 3
-}
+```text
+http://127.0.0.1:8000/scene/live/dashboard
 ```
 
-常见输入与预期路由：
+即使暂时未启动 CARLA，也可以打开页面；**历史离线研究面板需要本地已有对应 `evidence/` 报告**，否则不会凭空出现演示数据。
 
-| 输入 | 路由 | 说明 |
-|---|---|---|
-| 发动机温度过高怎么办？ | `knowledge` | RAG 检索、回答和来源 |
-| 现在车内温度是多少？ | `vehicle` | 查询模拟车内温度 |
-| 请把空调温度设置到23度。 | `vehicle` | 仅返回待确认操作 |
-| 请帮我打开车门。 | `unsupported` | 不执行任何车辆操作 |
+### 5.3 可选：连接 CARLA 实时 RGB
 
-`mode` 可设置为 `auto`、`vehicle`、`knowledge`。自动模式是**保守规则**而非高精度多意图分类器。
-
-对于写操作，响应将包含 `confirmation_token` 和 `confirmation_required`。只有用户明确核对操作内容后，在同一会话 Cookie 下调用 `POST /agent/confirm`，才会执行一次模拟写操作：
-
-```json
-{
-  "confirmation_token": "从上一步响应中获取",
-  "approved": true
-}
-```
-
-**切勿把示例接口接到真实车辆控制系统。**
-
-## 测试
+先启动 CARLA、创建带 `role_name=hero` 的场景车辆并启动上述 FastAPI，再在**适配 CARLA 客户端**的 Python 环境中运行：
 
 ```powershell
-python -m pytest tests -v
+python -m scripts.carla_live_rgb_client `
+  --host 127.0.0.1 --port 2000 `
+  --api-url http://127.0.0.1:8000 `
+  --role-name hero `
+  --fps 2 --width 960 --height 540
 ```
 
-项目开发记录中，本地完整测试曾达到 **31 passed**；真实统一入口集成测试也曾返回 `PASS: Unified Agent integration`。请以当前机器、当前提交实际运行结果为准。
+`hero` Actor ID 是仿真会话内的临时编号，**不能复用历史实验的 Actor ID**。上述命令仅传输图像与展示研究提示，不形成模型驾驶控制链。
 
-### RAG 检索评测
+### 5.4 可选：对已有融合报告单帧运行 Qwen
+
+如果本机已经有融合报告和 Qwen 模型，可以根据 CLI 帮助及实际路径设置参数。示意如下（将字符串占位符替换为自己的本机路径）：
 
 ```powershell
-python -m evaluation.run_rag_eval --mode both
+python -m app.scene_llm_risk `
+  --fusion-report "PATH_TO_EXISTING_FUSION_REPORT.json" `
+  --model-dir "PATH_TO_LOCAL_QWEN_MODEL" `
+  --device cuda
 ```
 
-本地12条人工编写的检索样本，开发记录显示 BM25 和 Hybrid 均达到 Recall@1=100%、Recall@3=100%、MRR@3=1.0000。
+此命令是**离线单帧研究**，不是 Dashboard 接收每帧时自动调用的在线 Qwen。
 
-**解释范围：** 这些测试问题与知识库紧密相关，不代表未知真实问题的性能，也不证明 Hybrid 优于 BM25；检索正确更不等于生成回答安全可靠。
+## 6. 三场景探索性评测
 
-### 工具规划开发集（12条）
+三组数据为三段**相关的仿真序列**，不是 103 个彼此独立的道路交通场景。行人场景曾对相同 48 帧重复运行 YOLO，重复报告**没有计为独立帧**。
 
-| Prompt 版本 | 工具选择准确率 | 工具与参数完全匹配 |
-|---|---:|---:|
-| V1 | 100% | 91.67% |
-| V2 | 83.33% | 83.33% |
-| V3 | 91.67% | 91.67% |
+| CARLA 场景 | 唯一帧数 | YOLO LOW | YOLO MEDIUM | YOLO UNKNOWN | YOLO HIGH |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 前车减速 | 25 | 23 | 2 | 0 | 0 |
+| 行人横穿 | 48 | 32 | 15 | 1 | 0 |
+| 交通灯绿→黄→红 | 30 | 7 | 8 | 15 | 0 |
+| **合计** | **103** | **62** | **25** | **16** | **0** |
 
-这12条已被用于 Prompt 迭代，属于开发集对比，不能作为独立泛化测试结果。原始运行报告可能包含本机绝对路径，因此默认不提交 `evaluation/results/`。
+### 6.1 事件状态与规则基线
 
-## 安全边界和待办
+- **前车制动**：CARLA 记录制动激活 15 帧；对应的原 YOLO 二维风险规则均输出 `LOW`。这是基线**未随制动事件提高等级**的观察，不能直接称为 15 次真实危险漏报。
+- **行人横穿**：48 帧中，按 CARLA 几何关系定义的“进入自车道横向范围”有 22 帧，其中原 YOLO 为 `LOW` 16 帧、`MEDIUM` 6 帧。仅进入横向范围不等同于已发生碰撞危险。
+- **交通灯**：绿、黄、红状态各 10 帧，来自 CARLA 控制状态；这不证明 RGB 画面中的 VLM 能逐帧正确辨认灯色，更不意味着红灯时已发生闯红灯。
 
-当前仅适合作为**单进程、本地、教学原型**：
+### 6.2 风险 Proxy：可复现，但不是真实危险标签
 
-1. `/tool/call` 与 `/vehicle/temperature` 可直接修改模拟温度，尚未统一鉴权；不要暴露公网。
-2. 会话 Cookie 不能替代登录认证，缺少完整的 CSRF 防护与权限系统。
-3. 模拟车辆状态是进程内全局字典，多个用户并不隔离；令牌存储也不能跨进程共享。
-4. 汽车知识是自编教学示例，并非官方维修手册；高风险回答不能替代专业诊断。
-5. 开发集规模小，需要额外收集未见问题，测试幻觉、越权请求、错误路由和多用户状态隔离。
+评测脚本使用人为设定的运动学/位置阈值构造风险**代理标签**，包括近似原点间距 TTC 和行人车道关注规则，交通灯组维持 `UNKNOWN` 代理。
 
-## 发布前检查
+| Proxy 对照指标 | 实际结果 |
+| --- | ---: |
+| 已对齐帧数 | 103 |
+| 能分配非 `UNKNOWN` Proxy 的帧 | **37/103（35.9%）** |
+| 在可评估帧上与代理标签严格一致的原 YOLO 输出 | **14/37（37.8%）** |
+| Proxy 为 `MEDIUM/HIGH` 而原 YOLO 为 `LOW` | **21/27（77.8%）** |
 
-确保 `.gitignore` 生效。**不要上传**模型权重、虚拟环境、Chroma 数据、原始敏感日志、个人绝对路径或 API 凭证。发布前检查 `git status --short`，并逐项核对暂存区内容。
+**解释边界：**`37.8%` 不是独立危险真值上的分类准确率；`77.8%` **不是实际危险漏报率**。Proxy 使用人为阈值、简化几何与强相关序列，不足以证明真实道路泛化能力。
+
+### 6.3 延迟与 Qwen 单帧记录
+
+历史 YOLO 三场景单图像墙钟处理时长（**排除每组首帧**）：
+
+| 场景 | 中位数 | P95 |
+| --- | ---: | ---: |
+| 前车减速 | 15.60 ms | 22.39 ms |
+| 行人横穿 | 15.26 ms | 21.29 ms |
+| 交通灯变化 | 15.47 ms | 19.19 ms |
+
+首帧可能包含模型加载，上述数据不应描述为纯 GPU 前向耗时或多模态端到端延迟。
+
+对**同一历史第 3488 帧**运行 Qwen2.5-0.5B-Instruct 的一次 Prompt 对照：
+
+| 指标 | Prompt V1 | Prompt V2 |
+| --- | --- | --- |
+| 最终风险 | `UNKNOWN` | `UNKNOWN` |
+| 有效证据引用数 | 0 | 3（`yolo:0/1/2`） |
+| JSON 验证 | `valid` | `valid_after_retry` |
+| 单帧文本生成耗时 | 3507.07 ms | 6665.29 ms |
+
+V2 在这次单帧实验中增加了有效证据引用，但**经过一次重试且耗时更长**；不宣称整体风险判断准确率提高或推理加速。
+
+## 7. 测试和可复现性边界
+
+- 历史全量 pytest 结果：`204 passed in 4.82s`；记录发生在新增部分 Dashboard/评测修改之前。
+- 已有证据桥接、YOLO 报告去重审计、事件对齐和 Proxy 分析的成功运行记录。
+- 原始帧、模型权重、包含本地绝对路径的 `evidence/` 报告不随公开仓库提供；需使用自己的 CARLA 采集与模型产出才能重复相应实验。
+- 对外发布前应执行一次**集中回归与安全审查**，不要把历史成功日志当作当前全部代码的最新验收。
+
+## 8. 隐私、安全与研究局限
+
+1. 仅供**本地研究和 CARLA 仿真**；默认监听 `127.0.0.1`，不要直接开放公网。
+2. 不包含真实车辆控制；模型输出只用于解释、展示与人工复核。
+3. 视觉检测框、VLM 文本声明、CARLA 状态与事后风险 Proxy **各自具有不同证据等级**，不可混为一谈。
+4. 单帧 RGB 缺乏可靠的距离、速度、物体轨迹、制动距离和碰撞几何估计，`LOW` 不等于道路安全。
+5. 低显存设备下，将实时 YOLO 与离线 Qwen 分区运行是**有意的资源和安全边界**。
+6. 发布时应排除本地权重、原始 `evidence/`、向量数据库、`.env`、个人绝对路径、备份文件和私有截图。
+7. 旧模拟车辆工具/状态接口可能不满足生产级鉴权要求；不得将其作为公共部署的安全实现示例。
+
+## 9. 后续研究方向
+
+后续可探索**事件触发的关键帧 VLM/Qwen 异步推理**、经标注的独立危险参考标签、跨场景/跨地图评测、稳态延迟测量与更稳健的时序关联。以上均为后续工作，**不属于本次已完成或已验证的能力**。
+
+---
+
+*研究原型说明截至 2026-11-18；本文中的数值均对应已记录的特定仿真序列与单次实验，不代表真实道路驾驶安全性能。*

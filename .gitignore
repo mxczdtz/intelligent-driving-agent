@@ -68,3 +68,26 @@ desktop.ini
 
 # YOLO generated results
 /runs/
+
+# Local development backups
+*.backup_*
+*.bbox_backup_*
+*.sync_backup_*
+*.modified_backup
+*.before_v2_*
+
+# Duplicate downloaded Python modules
+/app/live_carla_api_dashboard_v2.py
+/app/scene_llm_risk_prompt_v2.py
+
+
+# Local development backups
+*.backup_*
+*.bbox_backup_*
+*.sync_backup_*
+*.modified_backup
+*.before_v2_*
+
+# Duplicate downloaded Python modules
+/app/live_carla_api_dashboard_v2.py
+/app/scene_llm_risk_prompt_v2.py

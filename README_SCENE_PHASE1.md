@@ -22,9 +22,9 @@
 建议先运行：
 
 ```powershell
-Set-Location "E:\SoftWareFiles\pycharmFiles\pythonProject2\vehicle-agent-rag-demo"
+Set-Location "<YOUR_PROJECT_ROOT>"
 git status -sb
-$PY = "D:\anaconda3\envs\llm-gpu\python.exe"
+$PY = "python"  # 使用已配置好依赖的 Python 环境
 & $PY --version
 ```
 

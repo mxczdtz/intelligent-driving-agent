@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/schemas/scene_llm_risk_v1.schema.json",
+  "title": "Scene LLM Candidate Risk Decision V1",
+  "description": "Strict candidate output from local Qwen; used for simulation research only, not vehicle control.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "risk_level",
+    "key_factors",
+    "evidence_refs",
+    "driving_suggestion",
+    "uncertainty"
+  ],
+  "properties": {
+    "risk_level": {
+      "type": "string",
+      "enum": [
+        "unknown",
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    "key_factors": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 5,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 180
+      }
+    },
+    "evidence_refs": {
+      "type": "array",
+      "maxItems": 8,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 50
+      }
+    },
+    "driving_suggestion": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 180
+    },
+    "uncertainty": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 5,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 180
+      }
+    }
+  }
+}

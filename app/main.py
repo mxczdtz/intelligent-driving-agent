@@ -745,3 +745,12 @@ def unified_chat(
 # === SCENE_RISK_ROUTER_PHASE1 ===
 from app.scene_api import router as scene_risk_router
 app.include_router(scene_risk_router)
+
+# === MULTIMODAL_DRIVING_AGENT_PHASE5_1 ===
+# Keep the existing /scene/analyze single-image endpoint unchanged.
+from app.multimodal_api import router as multimodal_agent_router
+app.include_router(multimodal_agent_router)
+
+# === CARLA_LIVE_RGB_PHASE5_2 ===
+from app.live_carla_api import router as carla_live_rgb_router
+app.include_router(carla_live_rgb_router)
