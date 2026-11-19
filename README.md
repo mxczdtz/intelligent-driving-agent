@@ -276,3 +276,37 @@ V2 在这次单帧实验中增加了有效证据引用，但**经过一次重试
 ---
 
 *研究原型说明截至 2026-11-18；本文中的数值均对应已记录的特定仿真序列与单次实验，不代表真实道路驾驶安全性能。*
+
+
+## Dashboard V4.2 — Unified Vehicle AI Platform
+
+### Latest features
+
+- Unified cockpit Agent and multimodal driving research dashboard.
+- Natural-language vehicle queries and simulated temperature control.
+- Tool calling, parameter validation and user confirmation.
+- VehicleRAG knowledge retrieval with source information.
+- Real-time CARLA RGB and YOLO11n detection.
+- Asynchronous keyframe analysis with SmolVLM2, Fusion and local Qwen.
+- JSON validation laboratory and API request inspector.
+
+### Web interfaces
+
+- Unified Dashboard: http://127.0.0.1:8000/dashboard
+- Driving Dashboard: http://127.0.0.1:8000/scene/live/dashboard
+- Swagger API: http://127.0.0.1:8000/docs
+
+### Validation
+
+- Latest regression tests: 204 passed.
+- Non-empty YOLO evidence verified through Fusion and Qwen input.
+- Three CARLA research scenarios with 103 unique captured frames.
+- Explicit evidence references and risk predictions remain model-dependent.
+
+### Safety boundary
+
+This project is intended for simulation, education and research.
+It does not control real vehicles. Multimodal risk inference runs
+asynchronously on selected keyframes, not on every live frame.
+Cockpit tools operate on simulated vehicle state only.
+Local model weights and experimental evidence are not included.

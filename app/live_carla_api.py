@@ -514,6 +514,204 @@ def research_replay():
     }
 
 
+
+# === ASYNC MULTIMODAL KEYFRAME PANEL (READ ONLY) ===
+# This part reads the standalone bridge's local evidence. It never starts models,
+# changes the live YOLO /frame path, or issues simulator/vehicle commands.
+AUTO_BRIDGE_DIR = (PROJECT_ROOT / "evidence" / "live_multimodal_bridge").resolve()
+AUTO_BRIDGE_STATUS = AUTO_BRIDGE_DIR / "status.json"
+MAX_AUTO_STATUS_BYTES = 1024 * 1024
+MAX_AUTO_IMAGE_BYTES = 5 * 1024 * 1024
+
+
+def _auto_status_document() -> dict[str, Any] | None:
+    try:
+        path = AUTO_BRIDGE_STATUS.resolve(strict=True)
+        if (not path.is_file() or not path.is_relative_to(AUTO_BRIDGE_DIR)
+                or path.stat().st_size > MAX_AUTO_STATUS_BYTES):
+            return None
+        with path.open("r", encoding="utf-8-sig") as handle:
+            data = json.load(handle)
+        return data if isinstance(data, dict) else None
+    except (OSError, ValueError, json.JSONDecodeError):
+        return None
+
+
+def _auto_bridge_entries() -> list[dict[str, Any]]:
+    doc = _auto_status_document()
+    if doc is None:
+        return []
+    recent = doc.get("recent_events")
+    entries = [item for item in recent[-30:] if isinstance(item, dict)] if isinstance(recent, list) else []
+    latest = doc.get("latest")
+    if isinstance(latest, dict) and (not entries or entries[-1] != latest):
+        entries.append(latest)
+    return entries
+
+
+def _auto_entry_key(entry: dict[str, Any]) -> tuple[str, int] | None:
+    session = entry.get("session_id")
+    frame = entry.get("frame_id")
+    if (not isinstance(session, str) or not SESSION_RE.fullmatch(session)
+            or type(frame) is not int or frame < 0):
+        return None
+    return session, frame
+
+
+def _auto_image_path(entry: dict[str, Any]) -> Path | None:
+    """Only permit immutable bridge JPEGs inside evidence/.../sessions/<session>."""
+    key = _auto_entry_key(entry)
+    if key is None:
+        return None
+    session, frame = key
+    image = entry.get("image_path")
+    if not isinstance(image, str) or not image:
+        return None
+    try:
+        folder = (AUTO_BRIDGE_DIR / "sessions" / session).resolve(strict=True)
+        path = Path(image).resolve(strict=True)
+        if (not folder.is_relative_to(AUTO_BRIDGE_DIR)
+                or not path.is_relative_to(folder)
+                or not path.is_file()
+                or path.suffix.lower() not in {".jpg", ".jpeg"}
+                or not path.name.startswith(f"frame_{frame:08d}_")
+                or not 0 < path.stat().st_size <= MAX_AUTO_IMAGE_BYTES):
+            return None
+        return path
+    except (OSError, ValueError):
+        return None
+
+
+def _auto_safe_detections(raw: Any) -> list[dict[str, Any]]:
+    output = []
+    if not isinstance(raw, list):
+        return output
+    for item in raw[:80]:
+        if not isinstance(item, dict):
+            continue
+        name = _text_only(item.get("class_name"), 60)
+        confidence = _json_number(item.get("confidence"))
+        box = item.get("box_xyxy")
+        if not name or confidence is None or confidence > 1:
+            continue
+        if not isinstance(box, list) or len(box) != 4:
+            box = None
+        elif not all(type(x) in (int, float) and math.isfinite(x) for x in box):
+            box = None
+        output.append({
+            "class_name": name,
+            "confidence": confidence,
+            "box_xyxy": box,
+        })
+    return output
+
+
+@router.get("/research/auto/status", summary="只读自动联动关键帧结果")
+def auto_keyframe_status():
+    """Display the last completed bridge run; never represent it as current-frame Qwen."""
+    entries = _auto_bridge_entries()
+    with STATE_LOCK:
+        live_session = _STATE["session_id"]
+        live = _STATE["latest"]
+        live_frame = live["frame_id"] if isinstance(live, dict) else None
+        live_active = bool(_STATE["active"])
+
+    base = {
+        "ok": True,
+        "available": False,
+        "mode": "asynchronous_saved_keyframe",
+        "vehicle_control_enabled": False,
+        "live_session_id": live_session,
+        "live_frame_id": live_frame,
+        "live_active": live_active,
+        "analysis": None,
+    }
+    if not entries:
+        return JSONResponse(base, headers={"Cache-Control": "no-store"})
+
+    event = entries[-1]
+    key = _auto_entry_key(event)
+    if key is None:
+        return JSONResponse(base, headers={"Cache-Control": "no-store"})
+    session, frame = key
+    image_path = _auto_image_path(event)
+    width, height = None, None
+    if image_path is not None:
+        try:
+            with Image.open(image_path) as picture:
+                if picture.format == "JPEG":
+                    width, height = picture.size
+        except (OSError, UnidentifiedImageError, ValueError):
+            pass
+
+    same_session = bool(live_session and session == live_session)
+    same_current_frame = same_session and frame == live_frame
+    frame_lag = (max(0, live_frame - frame)
+                 if same_session and type(live_frame) is int else None)
+    status = _text_only(event.get("status"), 50)
+    analysis = {
+        "session_id": session,
+        "frame_id": frame,
+        "captured_at": _text_only(event.get("captured_at"), 80),
+        "analyzed_at": _text_only(event.get("analyzed_at"), 80),
+        "status": status,
+        "same_live_session": same_session,
+        "same_current_frame": same_current_frame,
+        "frame_lag": frame_lag,
+        "image_url": (
+            f"/scene/live/research/auto/keyframe.jpg?session_id={session}&frame_id={frame}"
+            if width is not None and height is not None else None
+        ),
+        "image_width": width,
+        "image_height": height,
+        "yolo": {
+            "risk_level": _risk_level(event.get("yolo_rule_risk")),
+            "detections": _auto_safe_detections(event.get("yolo_detections")),
+        },
+        "vlm_unverified_text": _text_only(event.get("vlm_unverified_text"), 1200),
+        "qwen": {
+            "risk_level": _risk_level(event.get("qwen_risk")),
+            "validation": _text_only(event.get("qwen_validation"), 50),
+            "factors": _short_strings(event.get("key_factors"), 5, 180),
+            "evidence_refs": [
+                ref for ref in _short_strings(event.get("evidence_refs"), 8, 40)
+                if re.fullmatch(r"(?:yolo|vlm):\d{1,3}|ego:speed", ref)
+            ],
+            "uncertainty": _short_strings(event.get("uncertainty"), 5, 180),
+        },
+        "note": (
+            "Completed independently from the live RGB request. "
+            "This is a SAVED keyframe analysis, not current-frame vehicle control."
+        ),
+    }
+    base["available"] = True
+    base["analysis"] = analysis
+    return JSONResponse(base, headers={"Cache-Control": "no-store"})
+
+
+@router.get("/research/auto/keyframe.jpg", summary="只读自动联动关键帧 JPEG")
+def auto_keyframe_image(session_id: str, frame_id: int):
+    if not SESSION_RE.fullmatch(session_id) or frame_id < 0:
+        raise HTTPException(status_code=404, detail="关键帧不存在。")
+    for event in reversed(_auto_bridge_entries()):
+        if _auto_entry_key(event) != (session_id, frame_id):
+            continue
+        path = _auto_image_path(event)
+        if path is None:
+            continue
+        try:
+            jpeg = path.read_bytes()
+        except OSError:
+            break
+        if (jpeg.startswith(b"\xff\xd8\xff") and jpeg.rstrip().endswith(b"\xff\xd9")
+                and len(jpeg) <= MAX_AUTO_IMAGE_BYTES):
+            return Response(
+                content=jpeg, media_type="image/jpeg",
+                headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"},
+            )
+    raise HTTPException(status_code=404, detail="关键帧图像不存在。")
+
+
 @router.get("/snapshot", summary="????????????")
 def live_snapshot():
     import base64
@@ -621,6 +819,17 @@ a{color:#086e67}
   header{align-items:flex-start;flex-direction:column}
   .card{padding:15px}
 }
+
+/* Saved automatic keyframe: separate from the LIVE camera and the archive. */
+.auto-grid{display:grid;grid-template-columns:minmax(250px,1fr) minmax(0,1.15fr);gap:21px;margin-top:17px}
+.auto-image{position:relative;overflow:hidden;border-radius:11px;background:#102c31;line-height:0}
+#auto-frame{display:block;width:100%;height:auto;min-height:150px;object-fit:contain}
+#auto-bbox{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+.auto-subtitle{font-size:12px;color:var(--muted);margin-top:8px}
+.auto-muted{background:#f5f9f7;border-radius:10px;padding:11px 13px;line-height:1.6;overflow-wrap:anywhere}
+.auto-grid h3{margin-top:15px}
+#auto-refs{min-height:23px}
+@media(max-width:840px){.auto-grid{grid-template-columns:1fr}}
 </style>
 </head>
 <body><main>
@@ -663,6 +872,60 @@ a{color:#086e67}
     <p class="muted">此区域仅使用图像像素，不读取 CARLA 物理真值。</p>
   </aside>
 </div>
+
+
+<section class="card" id="auto-linked" style="margin-bottom:20px">
+  <div class="report-top">
+    <div>
+      <div class="section-label">AUTOMATIC KEYFRAME ANALYSIS</div>
+      <h2 style="margin-top:6px;margin-bottom:5px">YOLO → VLM → Qwen · 自动联动</h2>
+      <div class="muted">从独立联动脚本产生的同帧报告读取结果；实时 YOLO 不会等待 VLM/Qwen。</div>
+    </div>
+    <span class="pill offline" id="auto-pill">ASYNC · SAVED KEYFRAME</span>
+  </div>
+  <div class="quiet" style="margin-top:14px">
+    <strong>帧同步说明：</strong>这是从实时摄像头选取并保存的关键帧分析，
+    不是当前实时画面的逐帧 Qwen 风险判断。不同会话的历史结果会明确标出。
+    仅用于 CARLA 仿真研究和人工复核。
+  </div>
+  <p id="auto-state" class="status" role="status" style="margin:15px 0">
+    正在读取自动联动结果……
+  </p>
+  <div id="auto-content" hidden>
+    <div class="report-vals">
+      <div class="report-val"><small>关键帧 Session</small><b id="auto-session" class="mono">—</b></div>
+      <div class="report-val"><small>CARLA Frame</small><b id="auto-frameid">—</b></div>
+      <div class="report-val"><small>处理状态</small><b id="auto-runstate">—</b></div>
+    </div>
+    <p class="muted" id="auto-match" style="margin:11px 0">—</p>
+    <div class="auto-grid">
+      <div>
+        <div class="auto-image" id="auto-img-wrap" hidden>
+          <img id="auto-frame" alt="自动分析所使用的已保存 CARLA 关键帧">
+          <svg id="auto-bbox" role="presentation" aria-hidden="true"></svg>
+        </div>
+        <p class="auto-subtitle">关键帧静态截图与对应 YOLO 框（不是当前 LIVE 画面）。</p>
+        <h3>关键帧 YOLO 目标检测</h3>
+        <div class="dets" id="auto-detections"></div>
+        <p class="muted" id="auto-yolo-risk">二维启发式风险：—</p>
+        <h3>VLM 场景描述（未经独立核验）</h3>
+        <p id="auto-vlm" class="auto-muted">—</p>
+      </div>
+      <div>
+        <div class="section-label">QWEN · STRUCTURED RISK</div>
+        <div id="auto-risk" class="risk unknown" style="margin-top:7px">UNKNOWN</div>
+        <p id="auto-validation" class="muted">—</p>
+        <h3>关键因素</h3>
+        <ul id="auto-factors"></ul>
+        <h3>证据引用 ID</h3>
+        <div class="refs" id="auto-refs"></div>
+        <h3>不确定性</h3>
+        <ul id="auto-uncertainty"></ul>
+        <p class="muted">本区域不产生驾驶控制指令；UNKNOWN 不代表场景安全。</p>
+      </div>
+    </div>
+  </div>
+</section>
 
 <section class="card" id="research">
   <div class="report-top">
@@ -773,8 +1036,8 @@ function makeList(id, items, empty="暂无内容") {
     element.appendChild(li);
   }
 }
-function drawBoxes(items, w, h) {
-  const svg = $("bbox-layer");
+function drawBoxes(items, w, h, target="bbox-layer") {
+  const svg = $(target);
   svg.setAttribute("viewBox", `0 0 ${w || 960} ${h || 540}`);
   svg.replaceChildren();
   for (const item of (items || [])) {
@@ -851,6 +1114,113 @@ async function refreshLive() {
     liveBusy = false;
   }
 }
+
+let autoBusy = false;
+let lastAutoImage = "";
+
+async function refreshAutoLinked() {
+  if (autoBusy) return;
+  autoBusy = true;
+  try {
+    const response = await fetch("/scene/live/research/auto/status", {cache:"no-store"});
+    if (!response.ok) throw new Error("auto status HTTP " + response.status);
+    const body = await response.json();
+    const data = body.analysis;
+    if (!body.available || !data) {
+      $("auto-content").hidden = true;
+      $("auto-pill").textContent = "WAITING · KEYFRAME";
+      setText("auto-state", "尚无自动联动关键帧。请先运行独立的 live_multimodal_bridge.py；历史 Qwen 面板仍可正常使用。");
+      return;
+    }
+    $("auto-content").hidden = false;
+    const state = data.status || "unknown";
+    setText("auto-state", state === "complete"
+      ? "已读取自动联动完成的关键帧报告（页面只读，不重新触发模型）。"
+      : state === "failed"
+        ? "该关键帧的联动未完成，请查看联动脚本 PowerShell 中的错误。"
+        : "状态：" + state + "；并非每帧实时 Qwen 推理。");
+    $("auto-pill").textContent = state === "complete"
+      ? "COMPLETE · SAVED KEYFRAME" : "KEYFRAME · " + state.toUpperCase();
+
+    setText("auto-session", String(data.session_id || "").slice(0, 12));
+    setText("auto-frameid", data.frame_id);
+    setText("auto-runstate", state);
+    const same = Boolean(data.same_live_session);
+    const current = Boolean(data.same_current_frame);
+    const lag = data.frame_lag;
+    setText("auto-match", current
+      ? "帧号与当前 LIVE 画面一致（分析仍是已保存的异步结果）。"
+      : same
+        ? "属于当前 CARLA 会话的历史关键帧；与最新 LIVE 画面相差 " +
+          (lag === null ? "未知" : String(lag)) + " 帧。"
+        : "与当前 LIVE 画面不是同一会话；这是之前保存的分析结果。");
+    const dets = (data.yolo && data.yolo.detections) || [];
+    setText("auto-yolo-risk", "关键帧 YOLO 二维规则：" +
+      String((data.yolo && data.yolo.risk_level) || "unknown").toUpperCase() +
+      " · 检测数：" + dets.length);
+    const area = $("auto-detections");
+    area.replaceChildren();
+    for (const obj of dets) {
+      const chip = document.createElement("span");
+      chip.className = "chip";
+      chip.textContent = obj.class_name + " " +
+        Math.round(Number(obj.confidence) * 100) + "%";
+      area.appendChild(chip);
+    }
+    if (!dets.length) {
+      const node = document.createElement("span");
+      node.className = "muted";
+      node.textContent = "本关键帧无 YOLO 检测目标；不等于安全";
+      area.appendChild(node);
+    }
+    setText("auto-vlm", data.vlm_unverified_text, "此关键帧尚无可用 VLM 描述。");
+    const q = data.qwen || {};
+    const level = ["low","medium","high","unknown"].includes(q.risk_level)
+      ? q.risk_level : "unknown";
+    setText("auto-risk", level.toUpperCase());
+    $("auto-risk").className = "risk " + level;
+    setText("auto-validation", "JSON 校验：" +
+      (q.validation || "无") + " · 完成时间：" + (data.analyzed_at || "未知"));
+    makeList("auto-factors", q.factors, "没有可展示的关键因素");
+    makeList("auto-uncertainty", q.uncertainty, "未提供不确定性条目");
+    const refs = $("auto-refs");
+    refs.replaceChildren();
+    for (const id of (q.evidence_refs || [])) {
+      const chip = document.createElement("span");
+      chip.className = "chip selected mono";
+      chip.textContent = id;
+      refs.appendChild(chip);
+    }
+    if (!refs.childElementCount) {
+      const node = document.createElement("span");
+      node.className = "muted";
+      node.textContent = "本关键帧未引用具体视觉证据";
+      refs.appendChild(node);
+    }
+
+    const imageUrl = data.image_url || "";
+    const imageIdentity = data.session_id + ":" + data.frame_id + ":" + imageUrl;
+    const wrap = $("auto-img-wrap");
+    if (imageUrl) {
+      wrap.hidden = false;
+      if (lastAutoImage !== imageIdentity) {
+        lastAutoImage = imageIdentity;
+        $("auto-frame").src = imageUrl;
+      }
+      drawBoxes(dets, data.image_width, data.image_height, "auto-bbox");
+    } else {
+      wrap.hidden = true;
+      $("auto-frame").removeAttribute("src");
+      $("auto-bbox").replaceChildren();
+      lastAutoImage = "";
+    }
+  } catch (error) {
+    setText("auto-state", "自动联动结果接口暂不可用：" + String(error));
+  } finally {
+    autoBusy = false;
+  }
+}
+
 function showReport(report) {
   $("report-content").hidden = false;
   setText("research-error", "");
@@ -1004,9 +1374,11 @@ $("report-reload").addEventListener("click", async () => {
   await loadReplay();
 });
 refreshLive();
+refreshAutoLinked();
 loadReportIndex();
 loadReplay();
 setInterval(refreshLive, 1000);
+setInterval(refreshAutoLinked, 5000);
 setInterval(loadReportIndex, 15000);
 </script>
 </main></body></html>""")
